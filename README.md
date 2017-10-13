@@ -17,6 +17,7 @@ A lambda script to constantly update the Cachet status page at [status.projectal
 | mongo_username  | the http auth username                |
 | mongo_password  | the http auth password                |
 | cachet_token    | Cachet token to report statistics     |
+| raven_dsn       | Raven DNS for tracking|
 
 #### Lambda setup
 
