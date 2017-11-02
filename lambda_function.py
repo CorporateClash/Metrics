@@ -48,7 +48,7 @@ def handle_login():
 def handle_website():
     status = ComponentStatus.operational
     try:
-        req = requests.get("https://www.projectaltis.com", headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+        req = requests.get("https://www.projectaltis.com/launcher", headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         print("Website returned " + str(req.status_code) + " in seconds: " + str(int(req.elapsed.seconds)))
         if req.elapsed.seconds > 3:
             status = ComponentStatus.performanceIssues
