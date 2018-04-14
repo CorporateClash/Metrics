@@ -32,7 +32,7 @@ def handle_login():
         req = requests.post(login_endpoint, headers={'User-Agent': user_agent}, json=data, timeout=10)
         print("Api returned " + str(req.status_code) + " in microseconds: " + str(int(req.elapsed.microseconds)))
         # report metric no matter what
-        Cachet.report_login_time(req.elapsed.microseconds, login_metric_id)
+        Cachet.report_login_time(int(req.elapsed.microseconds) / 1000, login_metric_id)
         # report performance issue
         if req.elapsed.seconds > 3:
             status = ComponentStatus.performanceIssues
