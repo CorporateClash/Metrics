@@ -1,3 +1,4 @@
+.serverless/
 ## Altis metrics specific
 # Zips used to upload to lambda
 *.zip
