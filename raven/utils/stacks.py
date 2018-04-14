@@ -10,6 +10,7 @@ from __future__ import absolute_import, division
 import inspect
 import linecache
 import re
+import os
 import sys
 
 from raven.utils.serializer import transform
@@ -135,9 +136,8 @@ def iter_stack_frames(frames=None):
 
     for frame, lineno in ((f[0], f[2]) for f in frames):
         f_locals = getattr(frame, 'f_locals', {})
-        if _getitem_from_frame(f_locals, '__traceback_hide__'):
-            continue
-        yield frame, lineno
+        if not _getitem_from_frame(f_locals, '__traceback_hide__'):
+            yield frame, lineno
 
 
 def get_frame_locals(frame, transformer=transform, max_var_size=4096):
@@ -158,7 +158,7 @@ def get_frame_locals(frame, transformer=transform, max_var_size=4096):
     for k, v in iteritems(f_locals):
         v = transformer(v)
         v_size = len(repr(v))
-        if v_size + f_size < 4096:
+        if v_size + f_size < max_var_size:
             f_vars[k] = v
             f_size += v_size
     return f_vars
@@ -203,16 +203,15 @@ def slim_frame_data(frames, frame_allowance=25):
             frame.pop('post_context', None)
             remaining -= 1
 
-    if not remaining:
-        return frames
+    if remaining:
+        app_allowance = app_count - remaining
+        half_max = int(app_allowance / 2)
 
-    app_allowance = app_count - remaining
-    half_max = int(app_allowance / 2)
+        for frame in app_frames[half_max:-half_max]:
+            frame.pop('vars', None)
+            frame.pop('pre_context', None)
+            frame.pop('post_context', None)
 
-    for frame in app_frames[half_max:-half_max]:
-        frame.pop('vars', None)
-        frame.pop('pre_context', None)
-        frame.pop('post_context', None)
     return frames
 
 
@@ -278,7 +277,7 @@ def get_stack_info(frames, transformer=transform, capture_locals=True,
         try:
             base_filename = sys.modules[module_name.split('.', 1)[0]].__file__
             filename = abs_path.split(
-                base_filename.rsplit('/', 2)[0], 1)[-1].lstrip("/")
+                base_filename.rsplit(os.sep, 2)[0], 1)[-1].lstrip(os.sep)
         except Exception:
             filename = abs_path
 

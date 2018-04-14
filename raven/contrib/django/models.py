@@ -15,6 +15,7 @@ import logging
 import sys
 import warnings
 
+import django
 from django.conf import settings
 from django.core.signals import got_request_exception, request_started
 from threading import Lock
@@ -165,7 +166,13 @@ class SentryDjangoHandler(object):
             SentryCeleryHandler, register_logger_signal
         )
 
-        self.celery_handler = SentryCeleryHandler(client).install()
+        ignore_expected = getattr(settings,
+                                  'SENTRY_CELERY_IGNORE_EXPECTED',
+                                  False)
+
+        self.celery_handler = SentryCeleryHandler(client,
+                                                  ignore_expected=ignore_expected)\
+                                                  .install()
 
         # try:
         #     ga = lambda x, d=None: getattr(settings, 'SENTRY_%s' % x, d)
@@ -212,15 +219,12 @@ def register_serializers():
     import raven.contrib.django.serializers  # NOQA
 
 
-def install_middleware():
+def install_middleware(middleware_name, lookup_names=None):
     """
-    Force installation of SentryMiddlware if it's not explicitly present.
-
-    This ensures things like request context and transaction names are made
-    available.
+    Install specified middleware
     """
-    name = 'raven.contrib.django.middleware.SentryMiddleware'
-    all_names = (name, 'raven.contrib.django.middleware.SentryLogMiddleware')
+    if lookup_names is None:
+        lookup_names = (middleware_name,)
     # default settings.MIDDLEWARE is None
     middleware_attr = 'MIDDLEWARE' if getattr(settings,
                                               'MIDDLEWARE',
@@ -228,10 +232,10 @@ def install_middleware():
         else 'MIDDLEWARE_CLASSES'
     # make sure to get an empty tuple when attr is None
     middleware = getattr(settings, middleware_attr, ()) or ()
-    if set(all_names).isdisjoint(set(middleware)):
+    if set(lookup_names).isdisjoint(set(middleware)):
         setattr(settings,
                 middleware_attr,
-                type(middleware)((name,)) + middleware)
+                type(middleware)((middleware_name,)) + middleware)
 
 
 _setup_lock = Lock()
@@ -245,15 +249,30 @@ def initialize():
         if _initialized:
             return
 
-        register_serializers()
-        install_middleware()
-
-        # XXX(dcramer): maybe this setting should disable ALL of this?
-        if not getattr(settings, 'DISABLE_SENTRY_INSTRUMENTATION', False):
-            handler = SentryDjangoHandler()
-            handler.install()
-
-        # instantiate client so hooks get registered
-        get_client()  # NOQA
-
+        # mark this as initialized immediatley to avoid recursive import issues
         _initialized = True
+
+        try:
+            register_serializers()
+            install_middleware(
+                'raven.contrib.django.middleware.SentryMiddleware',
+                (
+                    'raven.contrib.django.middleware.SentryMiddleware',
+                    'raven.contrib.django.middleware.SentryLogMiddleware'))
+            install_middleware(
+                'raven.contrib.django.middleware.DjangoRestFrameworkCompatMiddleware')
+
+            # XXX(dcramer): maybe this setting should disable ALL of this?
+            if not getattr(settings, 'DISABLE_SENTRY_INSTRUMENTATION', False):
+                handler = SentryDjangoHandler()
+                handler.install()
+
+            # instantiate client so hooks get registered
+            get_client()  # NOQA
+        except Exception:
+            _initialized = False
+
+# Django 1.7 uses ``raven.contrib.django.apps.RavenConfig``
+if django.VERSION < (1, 7, 0):
+    initialize()
+

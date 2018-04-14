@@ -1,16 +1,21 @@
 from __future__ import absolute_import
 
-import time
+import os
 import logging
+
+from time import time
 from types import FunctionType
 
-from raven.utils.compat import iteritems, get_code, text_type, string_types
 from raven.utils import once
+from raven.utils.encoding import to_unicode
+from raven.utils.compat import iteritems, get_code, text_type, string_types
 
+CATEGORY_MAX_LENGTH = 128
+
+LEVEL_MAX_LENGTH = 16
 
 special_logging_handlers = []
 special_logger_handlers = {}
-
 
 logger = logging.getLogger('raven')
 
@@ -27,9 +32,10 @@ def event_payload_considered_equal(a, b):
 
 class BreadcrumbBuffer(object):
 
-    def __init__(self, limit=100):
+    def __init__(self, limit=100, message_max_length=1024):
         self.buffer = []
         self.limit = limit
+        self.message_max_length = message_max_length
 
     def record(self, timestamp=None, level=None, message=None,
                category=None, data=None, type=None, processor=None):
@@ -37,19 +43,30 @@ class BreadcrumbBuffer(object):
             raise ValueError('You must pass either `message`, `data`, '
                              'or `processor`')
         if timestamp is None:
-            timestamp = time.time()
-        self.buffer.append(({
+            timestamp = time()
+
+        # we format here to ensure we dont bloat memory due to message size
+        result = (self.format({
             'type': type or 'default',
-            'timestamp': timestamp,
+            'timestamp': float(timestamp),
             'level': level,
+            # hardcode message length to prevent huge crumbs
             'message': message,
             'category': category,
+            # TODO(dcramer): we should trim data
             'data': data,
-        }, processor))
+        }), processor)
+        self.buffer.append(result)
         del self.buffer[:-self.limit]
 
     def clear(self):
         del self.buffer[:]
+
+    def format(self, result):
+        result['message'] = to_unicode(result['message'])[:self.message_max_length] if result['message'] else None
+        result['category'] = to_unicode(result['category'])[:CATEGORY_MAX_LENGTH] if result['category'] else None
+        result['level'] = to_unicode(result['level'])[:LEVEL_MAX_LENGTH].lower() if result['level'] else None
+        return result
 
     def get_buffer(self):
         rv = []
@@ -58,9 +75,16 @@ class BreadcrumbBuffer(object):
                 try:
                     processor(payload)
                 except Exception:
+                    raise
                     logger.exception('Failed to process breadcrumbs. Ignored')
                     payload = None
+                else:
+                    # we format here to ensure we dont bloat memory due to message size
+                    payload = self.format(payload) if payload else None
                 self.buffer[idx] = (payload, None)
+            elif payload is not None:
+                payload = self.format(payload)
+
             if payload is not None and \
                (not rv or not event_payload_considered_equal(rv[-1], payload)):
                 rv.append(payload)
@@ -91,7 +115,7 @@ def record(message=None, timestamp=None, level=None, category=None,
     on a specific client.
     """
     if timestamp is None:
-        timestamp = time.time()
+        timestamp = time()
     for ctx in raven.context.get_active_contexts():
         ctx.breadcrumbs.record(timestamp, level, message, category,
                                data, type, processor)
@@ -99,15 +123,12 @@ def record(message=None, timestamp=None, level=None, category=None,
 
 def _record_log_breadcrumb(logger, level, msg, *args, **kwargs):
     for handler in special_logging_handlers:
-        rv = handler(logger, level, msg, args, kwargs)
-        if rv:
+        if handler(logger, level, msg, args, kwargs):
             return
 
     handler = special_logger_handlers.get(logger.name)
-    if handler is not None:
-        rv = handler(logger, level, msg, args, kwargs)
-        if rv:
-            return
+    if handler is not None and handler(logger, level, msg, args, kwargs):
+        return
 
     def processor(data):
         formatted_msg = msg
@@ -154,6 +175,12 @@ def _wrap_logging_method(meth, level=None):
 
     code = get_code(func)
 
+    logging_srcfile = logging._srcfile
+    if logging_srcfile is None:
+        logging_srcfile = os.path.normpath(
+            logging.currentframe.__code__.co_filename
+        )
+
     # This requires a bit of explanation why we're doing this.  Due to how
     # logging itself works we need to pretend that the method actually was
     # created within the logging module.  There are a few ways to detect
@@ -183,7 +210,7 @@ def _wrap_logging_method(meth, level=None):
         'args': ', '.join(args),
         'fwd': fwd,
         'level': level,
-    }, logging._srcfile, 'exec'), logging.__dict__, ns)
+    }, logging_srcfile, 'exec'), logging.__dict__, ns)
 
     new_func = ns['factory'](meth, _record_log_breadcrumb)
     new_func.__doc__ = func.__doc__
@@ -231,9 +258,7 @@ def install_logging_hook():
 
 
 def ignore_logger(name_or_logger, allow_level=None):
-    """Ignores a logger for the regular breadcrumb code.  This is useful
-    for framework integration code where some log messages should be
-    specially handled.
+    """Ignores a logger during breadcrumb recording.
     """
     def handler(logger, level, msg, args, kwargs):
         if allow_level is not None and \
@@ -244,10 +269,13 @@ def ignore_logger(name_or_logger, allow_level=None):
 
 
 def register_special_log_handler(name_or_logger, callback):
-    """Registers a callback for log handling.  The callback is invoked
-    with give arguments: `logger`, `level`, `msg`, `args` and `kwargs`
-    which are the values passed to the logging system.  If the callback
-    returns `True` the default handling is disabled.
+    """Registers a callback for log handling. The callback is invoked
+    with given arguments: `logger`, `level`, `msg`, `args` and `kwargs`
+    which are the values passed to the logging system. If the callback
+    returns true value the default handling is disabled. Only one callback
+    can be registered per one logger name. Logger tree is not traversed
+    so calling this method with `spammy_module` argument will not silence
+    messages from `spammy_module.child`.
     """
     if isinstance(name_or_logger, string_types):
         name = name_or_logger
@@ -258,9 +286,10 @@ def register_special_log_handler(name_or_logger, callback):
 
 def register_logging_handler(callback):
     """Registers a callback for log handling.  The callback is invoked
-    with give arguments: `logger`, `level`, `msg`, `args` and `kwargs`
+    with given arguments: `logger`, `level`, `msg`, `args` and `kwargs`
     which are the values passed to the logging system.  If the callback
-    returns `True` the default handling is disabled.
+    returns true value the default handling is disabled. Registering
+    multiple handlers is allowed.
     """
     special_logging_handlers.append(callback)
 

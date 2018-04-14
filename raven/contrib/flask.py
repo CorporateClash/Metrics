@@ -17,6 +17,7 @@ else:
 
 import logging
 
+import blinker
 from flask import request, current_app, g
 from flask.signals import got_request_exception, request_finished
 from werkzeug.exceptions import ClientDisconnected
@@ -29,6 +30,10 @@ from raven.utils.compat import urlparse
 from raven.utils.encoding import to_unicode
 from raven.utils.wsgi import get_headers, get_environ
 from raven.utils.conf import convert_options
+
+
+raven_signals = blinker.Namespace()
+logging_configured = raven_signals.signal('logging_configured')
 
 
 def make_client(client_cls, app, dsn=None):
@@ -90,6 +95,7 @@ class Sentry(object):
       `wrap_wsgi=False`.
     - Capture information from Flask-Login (if available).
     """
+
     # TODO(dcramer): the client isn't using local context and therefore
     # gets shared by every app that does init on it
     def __init__(self, app=None, client=None, client_cls=Client, dsn=None,
@@ -135,14 +141,23 @@ class Sentry(object):
     def get_user_info(self, request):
         """
         Requires Flask-Login (https://pypi.python.org/pypi/Flask-Login/)
-        to be installed
-        and setup
+        to be installed and setup.
         """
+        user_info = {}
+
+        try:
+            ip_address = request.access_route[0]
+        except IndexError:
+            ip_address = request.remote_addr
+
+        if ip_address:
+            user_info['ip_address'] = ip_address
+
         if not has_flask_login:
-            return
+            return user_info
 
         if not hasattr(current_app, 'login_manager'):
-            return
+            return user_info
 
         try:
             is_authenticated = current_user.is_authenticated
@@ -150,17 +165,15 @@ class Sentry(object):
             # HACK: catch the attribute error thrown by flask-login is not attached
             # >   current_user = LocalProxy(lambda: _request_ctx_stack.top.user)
             # E   AttributeError: 'RequestContext' object has no attribute 'user'
-            return {}
+            return user_info
 
         if callable(is_authenticated):
             is_authenticated = is_authenticated()
 
         if not is_authenticated:
-            return {}
+            return user_info
 
-        user_info = {
-            'id': current_user.get_id(),
-        }
+        user_info['id'] = current_user.get_id()
 
         if 'SENTRY_USER_ATTRS' in current_app.config:
             for attr in current_app.config['SENTRY_USER_ATTRS']:
@@ -269,17 +282,23 @@ class Sentry(object):
             kwargs = {}
             if self.logging_exclusions is not None:
                 kwargs['exclude'] = self.logging_exclusions
+            handler = SentryHandler(self.client, level=self.level)
+            setup_logging(handler, **kwargs)
 
-            setup_logging(SentryHandler(self.client, level=self.level), **kwargs)
+            if app.logger.propagate is False:
+                app.logger.addHandler(handler)
+
+            logging_configured.send(
+                self, sentry_handler=SentryHandler, **kwargs)
 
         if self.wrap_wsgi:
             app.wsgi_app = SentryMiddleware(app.wsgi_app, self.client)
 
         app.before_request(self.before_request)
+        request_finished.connect(self.after_request, sender=app)
 
         if self.register_signal:
             got_request_exception.connect(self.handle_exception, sender=app)
-            request_finished.connect(self.after_request, sender=app)
 
         if not hasattr(app, 'extensions'):
             app.extensions = {}

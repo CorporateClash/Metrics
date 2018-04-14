@@ -67,10 +67,7 @@ if sys.version_info >= (3, 2):
 
 
 def get_excepthook_client():
-    hook = sys.excepthook
-    client = getattr(hook, 'raven_client', None)
-    if client is not None:
-        return client
+    return getattr(sys.excepthook, 'raven_client', None)
 
 
 class ModuleProxyCache(dict):
@@ -144,6 +141,7 @@ class Client(object):
     >>>     ident = client.get_ident(client.captureException())
     >>>     print "Exception caught; reference is %s" % ident
     """
+
     logger = logging.getLogger('raven')
     protocol_version = '6'
 
@@ -186,6 +184,7 @@ class Client(object):
         self.site = o.get('site')
         self.include_versions = o.get('include_versions', True)
         self.processors = o.get('processors')
+        self.sanitize_keys = o.get('sanitize_keys')
         if self.processors is None:
             self.processors = defaults.PROCESSORS
 
@@ -234,14 +233,13 @@ class Client(object):
         self.hook_libraries(hook_libraries)
 
     def _format_repos(self, value):
-        if not value:
-            return {}
         result = {}
-        for path, config in iteritems(value):
-            if path[0] != '/':
-                # assume its a module
-                path = os.path.abspath(__import__(path).__file__)
-            result[path] = config
+        if value:
+            for path, config in iteritems(value):
+                if path[0] != '/':
+                    # assume its a module
+                    path = os.path.abspath(__import__(path).__file__)
+                result[path] = config
         return result
 
     def set_dsn(self, dsn=None, transport=None):
@@ -332,18 +330,17 @@ class Client(object):
         >>> # Specify a scheme to use (http or https)
         >>> print client.get_public_dsn('https')
         """
-        if not self.is_enabled():
-            return
-        url = self.remote.get_public_dsn()
-        if not scheme:
+        if self.is_enabled():
+            url = self.remote.get_public_dsn()
+            if scheme:
+                return '%s:%s' % (scheme, url)
+
             return url
-        return '%s:%s' % (scheme, url)
 
     def _get_exception_key(self, exc_info):
         # On certain celery versions the tb_frame attribute might
         # not exist or be `None`.
-        code_id = 0
-        last_id = 0
+        code_id = last_id = 0
         try:
             code_id = id(exc_info[2] and exc_info[2].tb_frame.f_code)
             last_id = exc_info[2] and exc_info[2].tb_lasti or 0
@@ -374,7 +371,6 @@ class Client(object):
         The result of ``build_msg`` should be a standardized dict, with
         all default values available.
         """
-
         # create ID client-side so that it can be passed to application
         event_id = uuid.uuid4().hex
 
@@ -502,7 +498,9 @@ class Client(object):
                 # raven client internally in sentry and the alternative
                 # submission option of a list here is not supported by the
                 # internal sender.
-                data.setdefault('breadcrumbs', {'values': crumbs})
+                data.setdefault('breadcrumbs', {
+                    'values': crumbs
+                })
 
         return data
 
@@ -560,6 +558,7 @@ class Client(object):
         Update the tags context for future events.
 
         >>> client.tags_context({'version': '1.0'})
+
         """
         return self.context.merge({
             'tags': data,
@@ -618,7 +617,6 @@ class Client(object):
         :param sample_rate: a float in the range [0, 1] to sample this message
         :return: a tuple with a 32-length string identifying this event
         """
-
         if not self.is_enabled():
             return
 
@@ -825,15 +823,11 @@ class Client(object):
         wildcard_exclusions = (e for e in string_exclusions if e.endswith('*'))
         class_exclusions = (e for e in exclusions if isclass(e))
 
-        if exc_type in exclusions:
-            return False
-        elif exc_type.__name__ in exclusions:
-            return False
-        elif exc_name in exclusions:
-            return False
-        elif any(issubclass(exc_type, e) for e in class_exclusions):
-            return False
-        elif any(exc_name.startswith(e[:-1]) for e in wildcard_exclusions):
+        if (exc_type in exclusions
+                or exc_type.__name__ in exclusions
+                or exc_name in exclusions
+                or any(issubclass(exc_type, e) for e in class_exclusions)
+                or any(exc_name.startswith(e[:-1]) for e in wildcard_exclusions)):
             return False
         return True
 
@@ -902,7 +896,8 @@ class Client(object):
         return self.context(**kwargs)
 
     def captureBreadcrumb(self, *args, **kwargs):
-        """Records a breadcrumb with the current context.  They will be
+        """
+        Records a breadcrumb with the current context.  They will be
         sent with the next event.
         """
         # Note: framework integration should not call this method but
@@ -922,6 +917,7 @@ class Client(object):
 
 
 class DummyClient(Client):
-    "Sends messages into an empty void"
+    """Sends messages into an empty void."""
+
     def send(self, **kwargs):
         return None

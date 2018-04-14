@@ -1,0 +1,27 @@
+service: metrics
+
+provider:
+  name: aws
+  runtime: python3.6
+  memorySize: 128
+  timeout: 30
+  region: us-east-1
+  deploymentBucket:
+    name: clash-lambda-artifacts
+
+
+functions:
+  metrics:
+    handler: lambda_function.lambda_handler
+    events:
+      - schedule: rate(10 minutes)
+    environment:
+      cachet_endpoint: 'https://status.corporateclash.net/api/v1'
+      cachet_token: ${ssm:cachet_token}
+      login_username: 'judge'
+      login_password: ${ssm:login_password}
+      login_endpoint: 'https://corporateclash.net/api/v1/login'
+      login_metric_id: 3
+      login_comp_id: 2
+      website_comp_id: 1
+      website_endpoint: 'https://corporateclash.net'

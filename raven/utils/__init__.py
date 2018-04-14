@@ -43,13 +43,13 @@ def varmap(func, var, context=None, name=None):
     if objid in context:
         return func(name, '<...>')
     context[objid] = 1
-    if isinstance(var, dict):
-        ret = dict((k, varmap(func, v, context, k))
-                   for k, v in iteritems(var))
-    elif isinstance(var, (list, tuple)):
+    if isinstance(var, (list, tuple)):
         ret = [varmap(func, f, context, name) for f in var]
     else:
         ret = func(name, var)
+        if isinstance(ret, dict):
+            ret = dict((k, varmap(func, v, context, k))
+                       for k, v in iteritems(var))
     del context[objid]
     return ret
 
@@ -127,9 +127,8 @@ def get_versions(module_list=None):
             _VERSION_CACHE[module_name] = version
         else:
             version = _VERSION_CACHE[module_name]
-        if version is None:
-            continue
-        versions[module_name] = version
+        if version is not None:
+            versions[module_name] = version
     return versions
 
 

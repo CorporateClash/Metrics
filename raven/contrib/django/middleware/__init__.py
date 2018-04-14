@@ -69,6 +69,7 @@ class SentryResponseErrorIdMiddleware(MiddlewareMixin):
     Appends the X-Sentry-ID response header for referencing a message within
     the Sentry datastore.
     """
+
     def process_response(self, request, response):
         if not getattr(request, 'sentry', None):
             return response
@@ -117,3 +118,23 @@ class SentryMiddleware(MiddlewareMixin):
 
 
 SentryLogMiddleware = SentryMiddleware
+
+
+class DjangoRestFrameworkCompatMiddleware(MiddlewareMixin):
+
+    non_cacheable_types = (
+        'application/x-www-form-urlencoded',
+        'multipart/form-data',
+        'application/octet-stream'
+    )
+
+    def process_request(self, request):
+        """
+        Access request.body, otherwise it might not be accessible later
+        after request has been read/streamed
+        """
+        content_type = request.META.get('CONTENT_TYPE', '')
+        for non_cacheable_type in self.non_cacheable_types:
+            if non_cacheable_type in content_type:
+                return
+        request.body  # forces stream to be read into memory

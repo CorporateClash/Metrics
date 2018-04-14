@@ -1,1 +1,2 @@
-requests
+git+https://github.com/dmsimard/python-cachetclient
+raven

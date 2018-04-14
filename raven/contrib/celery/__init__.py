@@ -43,7 +43,7 @@ def register_logger_signal(client, logger=None, loglevel=logging.ERROR):
         # that the CeleryFilter is installed.
         # If one is found, we do not attempt to install another one.
         for h in logger.handlers:
-            if type(h) == SentryHandler:
+            if isinstance(h, SentryHandler):
                 h.addFilter(filter_)
                 return False
 
@@ -88,7 +88,9 @@ class SentryCeleryHandler(object):
         )
 
     def handle_task_prerun(self, sender, task_id, task, **kw):
+        self.client.context.activate()
         self.client.transaction.push(task.name)
 
     def handle_task_postrun(self, sender, task_id, task, **kw):
         self.client.transaction.pop(task.name)
+        self.client.context.clear()
