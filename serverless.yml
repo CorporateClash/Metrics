@@ -18,7 +18,7 @@ functions:
     environment:
       cachet_endpoint: 'https://status.corporateclash.net/api/v1'
       cachet_token: ${ssm:cachet_token}
-      login_username: 'judge'
+      login_username: 'lambda'
       login_password: ${ssm:login_password}
       login_endpoint: 'https://corporateclash.net/api/v1/login'
       login_metric_id: 3
