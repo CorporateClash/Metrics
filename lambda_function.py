@@ -35,7 +35,12 @@ def handle_login():
         Cachet.report_login_time(int(req.elapsed.microseconds) / 1000, login_metric_id)
         # report performance issue
         if req.elapsed.seconds > 3:
-            status = ComponentStatus.performanceIssues
+            import cache
+            if cache.present('login_slow'):
+                status = ComponentStatus.performanceIssues
+                cache.delete('login_slow')
+            else:
+                cache.create('login_slow')
         if req.status_code != 200:
             status = ComponentStatus.majorOutage
         try:
@@ -57,7 +62,12 @@ def handle_website():
         req = requests.get(website_endpoint, headers={'User-Agent': user_agent}, timeout=10)
         print("Website returned " + str(req.status_code) + " in microseconds: " + str(int(req.elapsed.microseconds)))
         if req.elapsed.seconds > 3:
-            status = ComponentStatus.performanceIssues
+            import cache
+            if cache.present('website_slow'):
+                status = ComponentStatus.performanceIssues
+                cache.delete('website_slow')
+            else:
+                cache.create('website_slow')
         if req.status_code != 200:
             status = ComponentStatus.majorOutage
     except:
@@ -74,7 +84,12 @@ def handle_mongo():
         req = requests.get(mongo_url, headers={'User-Agent': 'Mozilla/5.0'}, auth=(mongo_username, mongo_password), timeout=5)
         print("Mongo returned " + str(req.status_code) + " in seconds: " + str(int(req.elapsed.seconds)))
         if req.elapsed.seconds > 3:
-            status = ComponentStatus.performanceIssues
+            import cache
+            if cache.present('mongo_slow'):
+                status = ComponentStatus.performanceIssues
+                cache.delete('mongo_slow')
+            else:
+                cache.create('mongo_slow')
         if req.status_code != 200:
             status = ComponentStatus.majorOutage
     except:
