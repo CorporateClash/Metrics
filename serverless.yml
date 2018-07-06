@@ -24,4 +24,4 @@ functions:
       login_metric_id: 3
       login_comp_id: 2
       website_comp_id: 1
-      website_endpoint: 'https://corporateclash.net'
+      website_endpoint: 'https://corporateclash.net/api/v1/districts'
